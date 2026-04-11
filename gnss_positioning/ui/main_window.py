@@ -37,7 +37,7 @@ try:
         QDockWidget, QToolBar, QTableWidget, QTableWidgetItem,
         QHeaderView, QAbstractItemView,
     )
-    from PySide6.QtCore import Qt, QTimer, Signal as pyqtSignal, QPointF
+    from PySide6.QtCore import Qt, QTimer, Signal as pyqtSignal, QPointF, QUrl
     from PySide6.QtGui import (
         QPainter, QColor, QFont, QPen, QBrush,
         QLinearGradient, QPainterPath, QAction, QIcon,
@@ -57,7 +57,7 @@ if not HAS_PYQT:
             QDockWidget, QToolBar, QTableWidget, QTableWidgetItem,
             QHeaderView, QAbstractItemView,
         )
-        from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QPointF
+        from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QPointF, QUrl
         from PyQt6.QtGui import (
             QPainter, QColor, QFont, QPen, QBrush,
             QLinearGradient, QPainterPath, QAction, QIcon,
@@ -77,7 +77,7 @@ if not HAS_PYQT:
             QDockWidget, QToolBar, QTableWidget, QTableWidgetItem,
             QHeaderView, QAbstractItemView, QAction,
         )
-        from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QPointF
+        from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QPointF, QUrl
         from PyQt5.QtGui import (
             QPainter, QColor, QFont, QPen, QBrush,
             QLinearGradient, QPainterPath, QIcon,
@@ -650,21 +650,69 @@ class SignalBarsWidget(QWidget):
 # TimeSeriesWidget — scrolling HDOP / VDOP / 2D error time series
 # ---------------------------------------------------------------------------
 class TimeSeriesWidget(QWidget):
-    WINDOW_S = 300   # seconds of history to display
+    # (label, seconds) pairs for the window selector
+    WINDOWS = [
+        ("5 min",   5 * 60),
+        ("10 min", 10 * 60),
+        ("30 min", 30 * 60),
+        ("1 hr",   60 * 60),
+        ("12 hr", 12 * 3600),
+    ]
+    # Deque large enough for the longest window at 1 Hz
+    _MAX_POINTS = 12 * 3600  # 43 200
 
     def __init__(self, parent=None):
         super().__init__(parent)
         # Deque of (unix_time, hdop, vdop, err_2d_m)
-        self._data: deque = deque(maxlen=2000)
-        self.setMinimumHeight(180)
+        self._data: deque = deque(maxlen=self._MAX_POINTS)
+        self._window_s: int = self.WINDOWS[0][1]  # default: 5 min
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 4, 0, 0)
+        layout.setSpacing(0)
+
+        # Toolbar row
+        ctrl_row = QHBoxLayout()
+        ctrl_row.setContentsMargins(4, 0, 4, 0)
+        ctrl_row.addStretch()
+        lbl = QLabel("Window:")
+        lbl.setStyleSheet(f"color:{C['dim']};font-size:11px;")
+        ctrl_row.addWidget(lbl)
+        self._win_combo = QComboBox()
+        self._win_combo.setMaximumWidth(90)
+        for label, _ in self.WINDOWS:
+            self._win_combo.addItem(label)
+        self._win_combo.currentIndexChanged.connect(self._on_window_changed)
+        ctrl_row.addWidget(self._win_combo)
+        layout.addLayout(ctrl_row)
+
+        # Chart canvas — a child widget so paintEvent only covers it
+        self._canvas = _TimeSeriesCanvas(self)
+        layout.addWidget(self._canvas, 1)
+
+        self.setMinimumHeight(200)
+
+    def _on_window_changed(self, idx: int):
+        self._window_s = self.WINDOWS[idx][1]
+        self._canvas._window_s = self._window_s
+        self._canvas.update()
 
     def add_point(self, unix_t: float, hdop: float, vdop: float, err_2d: float):
         self._data.append((unix_t, hdop, vdop, err_2d))
-        self.update()
+        self._canvas.update()
 
     def clear(self):
         self._data.clear()
-        self.update()
+        self._canvas.update()
+
+
+class _TimeSeriesCanvas(QWidget):
+    """Internal canvas — owns the paintEvent so the combo isn't overdrawn."""
+
+    def __init__(self, parent: 'TimeSeriesWidget'):
+        super().__init__(parent)
+        self._owner = parent
+        self._window_s: int = parent._window_s
 
     def paintEvent(self, event):
         if not HAS_PYQT:
@@ -676,62 +724,81 @@ class TimeSeriesWidget(QWidget):
         w, h = self.width(), self.height()
         p.fillRect(self.rect(), QColor(C['panel']))
 
+        data = self._owner._data
+        win  = self._window_s
+
         ML, MR, MT, MB = 42, 12, 14, 28
         pw = w - ML - MR
         ph = h - MT - MB
 
-        if len(self._data) < 2:
+        if len(data) < 2:
             p.setPen(QColor(C['dim']))
             p.setFont(QFont('SF Mono', 11))
             p.drawText(ML + pw // 2 - 80, MT + ph // 2, "Waiting for data…")
             p.end()
             return
 
-        now = self._data[-1][0]
-        t0 = now - self.WINDOW_S
+        now = data[-1][0]
+        t0  = now - win
 
-        # Visible points
-        pts = [(t, hd, vd, e2) for t, hd, vd, e2 in self._data if t >= t0]
+        # Visible points within the selected window
+        pts = [(t, hd, vd, e2) for t, hd, vd, e2 in data if t >= t0]
         if not pts:
             p.end()
             return
 
-        # Y range — DOP is dimensionless, 2D error is in metres; they share the
-        # same axis because typical DOP (1–5) and error (1–5 m) are similar.
+        # Y range: DOP (dimensionless) and 2D error (m) share the same scale
         all_vals = [v for _, hd, vd, e2 in pts for v in (hd, vd, e2)
-                    if v is not None and not math.isnan(v)]
+                    if v is not None and not math.isnan(v) and v >= 0]
         y_max = max(max(all_vals) * 1.15, 3.0) if all_vals else 3.0
         y_min = 0.0
 
         def tx(t_unix):
-            return ML + int(pw * (t_unix - t0) / self.WINDOW_S)
+            return ML + int(pw * (t_unix - t0) / win)
 
         def ty(val):
             return MT + ph - int(ph * (val - y_min) / (y_max - y_min))
 
-        # Grid
         font_ax = QFont('SF Mono', 8)
         p.setFont(font_ax)
-        n_y = 4
-        for i in range(n_y + 1):
-            val = y_min + (y_max - y_min) * i / n_y
+
+        # Horizontal grid lines
+        for i in range(5):
+            val = y_min + (y_max - y_min) * i / 4
             y = ty(val)
             p.setPen(QPen(QColor(C['border']), 1, _Qt_Dash))
             p.drawLine(ML, y, w - MR, y)
             p.setPen(QColor(C['dim']))
             p.drawText(2, y + 4, f"{val:.1f}")
 
-        # X-axis time labels
-        for dt in [0, 60, 120, 180, 240, 300]:
+        # X-axis gridlines: pick a sensible step based on window length
+        # Steps tried in order; first one that gives 4-6 visible ticks is used.
+        step_candidates = [30, 60, 120, 300, 600, 900, 1800, 3600, 7200]
+        x_step = next((s for s in step_candidates if win / s <= 6), 3600)
+
+        dt = 0
+        while dt <= win:
             t_pt = t0 + dt
-            if t_pt > now:
-                break
-            x = tx(t_pt)
-            p.setPen(QPen(QColor(C['border']), 1, _Qt_Dash))
-            p.drawLine(x, MT, x, MT + ph)
-            p.setPen(QColor(C['dim']))
-            elapsed = int(now - t_pt)
-            p.drawText(x - 10, MT + ph + 16, f"-{elapsed}s")
+            if t_pt <= now:
+                x = tx(t_pt)
+                p.setPen(QPen(QColor(C['border']), 1, _Qt_Dash))
+                p.drawLine(x, MT, x, MT + ph)
+                p.setPen(QColor(C['dim']))
+                # Label as "−Xm" or "−Xh Ym" before now
+                ago = win - dt
+                if ago == 0:
+                    lbl = "now"
+                elif ago < 3600:
+                    m, s = divmod(ago, 60)
+                    lbl = f"-{m}m" if s == 0 else f"-{m}:{s:02d}"
+                else:
+                    h_ago, rem = divmod(ago, 3600)
+                    lbl = f"-{h_ago}h" if rem == 0 else f"-{h_ago}h{rem//60}m"
+                p.drawText(x - 14, MT + ph + 16, lbl)
+            dt += x_step
+        # Always label the right edge as "now"
+        p.setPen(QColor(C['dim']))
+        p.drawText(w - MR - 26, MT + ph + 16, "now")
 
         # Series: HDOP (blue), VDOP (orange), 2D Error (green)
         series = [
@@ -1101,7 +1168,10 @@ class LiveMapWidget(QWidget):
             return
         self._loaded = False
         html = self._google_html(self._google_key) if self._google_key else self._leaflet_html()
-        self.web.setHtml(html)
+        # Pass a base URL so the page has a proper https:// origin.
+        # Without this Qt WebEngine serves the page from about:blank (null origin),
+        # causing CDN and tile-server requests to carry a null Referer and get blocked.
+        self.web.setHtml(html, QUrl("https://localhost/"))
 
     def _on_loaded(self, ok):
         if not ok:
@@ -1247,16 +1317,6 @@ class MainWindow(QMainWindow):
         self.rover_btn.clicked.connect(self._toggle_rover)
         tb.addWidget(self.rover_btn)
 
-        self.cfg_rtcm_btn = QPushButton(_icon('icon_satellite'), "RTCM Only")
-        self.cfg_rtcm_btn.setEnabled(False)
-        self.cfg_rtcm_btn.clicked.connect(self._cfg_rtcm)
-        tb.addWidget(self.cfg_rtcm_btn)
-
-        self.cfg_ref_btn = QPushButton(_icon('icon_satellite'), "RTCM+NMEA")
-        self.cfg_ref_btn.setEnabled(False)
-        self.cfg_ref_btn.clicked.connect(self._cfg_rtcm_nmea)
-        tb.addWidget(self.cfg_ref_btn)
-
         _sep(tb)
 
         # --- Base connection ---
@@ -1384,6 +1444,7 @@ class MainWindow(QMainWindow):
         self._ref_labels = {}
         for i, (k, lbl) in enumerate([
             ('src',   'Source'),
+            ('fix',   'Ref Mode'),
             ('lat',   'Ref Lat'),
             ('lon',   'Ref Lon'),
             ('alt',   'Ref Alt'),
@@ -1542,8 +1603,6 @@ class MainWindow(QMainWindow):
             self.rover_btn.setObjectName("primary")
             self.rover_btn.style().unpolish(self.rover_btn)
             self.rover_btn.style().polish(self.rover_btn)
-            self.cfg_rtcm_btn.setEnabled(False)
-            self.cfg_ref_btn.setEnabled(False)
             self._log("Rover disconnected")
             return
 
@@ -1557,8 +1616,6 @@ class MainWindow(QMainWindow):
             self.rover_btn.setObjectName("")
             self.rover_btn.style().unpolish(self.rover_btn)
             self.rover_btn.style().polish(self.rover_btn)
-            self.cfg_rtcm_btn.setEnabled(True)
-            self.cfg_ref_btn.setEnabled(True)
             self._log(f"Rover connected: {port} @ {baud}")
         else:
             self._log("Rover connection failed!", error=True)
@@ -1580,18 +1637,6 @@ class MainWindow(QMainWindow):
             self._log(f"Base connected: {port} @ {baud}")
         else:
             self._log("Base connection failed!", error=True)
-
-    def _cfg_rtcm(self):
-        if self.pipeline.configure_rover_rtcm():
-            self._log("Rover configured: RTCM-only output")
-        else:
-            self._log("RTCM configuration failed!", error=True)
-
-    def _cfg_rtcm_nmea(self):
-        if self.pipeline.configure_rover_rtcm_with_reference():
-            self._log("Rover configured: RTCM + GGA/RMC reference")
-        else:
-            self._log("RTCM+NMEA configuration failed!", error=True)
 
     # ------------------------------------------------------------------
     # Mode
@@ -1660,7 +1705,7 @@ class MainWindow(QMainWindow):
         self.time_series.clear()
         self._err2d_hist.clear()
         self._err3d_hist.clear()
-        for k in ('e2d', 'e3d', 'r2d', 'r3d'):
+        for k in ('fix', 'e2d', 'e3d', 'r2d', 'r3d'):
             self._ref_labels[k].setText("—")
         self._log("History cleared")
 
@@ -1742,8 +1787,21 @@ class MainWindow(QMainWindow):
         for name, lbl in self._eph_labels.items():
             lbl.setText(f"{summary.get(name, 0)} SVs")
 
+    _GGA_FIX_LABELS = {
+        0: "No Fix",
+        1: "SPS",
+        2: "DGNSS",
+        3: "PPS",
+        4: "RTK Fixed",
+        5: "RTK Float",
+        6: "Estimated",
+    }
+
     def _on_reference(self, ref: dict):
         self._ref_labels['src'].setText(ref.get('source', '?'))
+        fq = ref.get('fix_quality', -1)
+        fix_str = self._GGA_FIX_LABELS.get(fq, f"Quality {fq}") if fq >= 0 else "—"
+        self._ref_labels['fix'].setText(fix_str)
         self._ref_labels['lat'].setText(f"{ref.get('latitude', 0.0):.8f}°")
         self._ref_labels['lon'].setText(f"{ref.get('longitude', 0.0):.8f}°")
         self._ref_labels['alt'].setText(f"{ref.get('altitude', 0.0):.3f} m")

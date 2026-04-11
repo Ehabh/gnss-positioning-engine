@@ -1,7 +1,7 @@
 # GNSS Positioning Engine — User Guide
 
 **Version:** 1.0.0  
-**Hardware:** Quectel LC29HBA  
+**Hardware:** Any RTCM3-capable GNSS receiver  
 **Platform:** macOS / Linux / Windows (Python 3.10+)
 
 ---
@@ -28,8 +28,9 @@
 ### Prerequisites
 
 - Python 3.10 or newer
-- One or two **Quectel LC29HBA** receivers connected via USB or UART adapter
-- For DGNSS / RTK: a second LC29HBA at a precisely known location as a base station
+- One (required) or two (optional) GNSS receivers connected via USB or UART adapter
+  - The receiver must be configured to output RTCM3 MSM4 observations (messages 1074/1084/1094/1124) and broadcast ephemeris (messages 1019/1020/1042/1046) for all desired constellations — the engine does not impose corrections; it reads whatever the receiver transmits
+  - Only SPS is currently supported; DGNSS and RTK are not yet implemented
 
 ### Install
 
@@ -70,34 +71,9 @@ python main.py --log-level WARNING   # quiet mode
 
 ## 3. UI Overview
 
-The interface is modelled on u-blox u-center 2 with a dark theme, dockable panels, and a central tab area.
+The interface features a dark theme with dockable panels and a central tabbed workspace.
 
-```
-┌──────────────────────────────────────────────────────────────────────┐
-│  TOOLBAR                                                              │
-│  Rover: [port▾] [baud▾] [Connect] [RTCM Only] [RTCM+NMEA]          │
-│  Base:  [port▾] [baud▾] [Connect Base]                               │
-│  Mode: [SPS] [DGNSS] [RTK]   [Record]   [Refresh Ports]             │
-├───────────────────────┬──────────────────────────┬────────────────────┤
-│  LEFT DOCK            │  CENTRAL TABS            │  RIGHT DOCK        │
-│                       │                          │                    │
-│  ┌─────────────────┐  │  Map | Signal | Scatter  │  Satellite Table  │
-│  │   FIX BADGE     │  │        | DOP/2D          │  PRN · Sys · CNR  │
-│  │   (SPS / DGNSS  │  │                          │  Used · Lock(s)   │
-│  │    RTK FLOAT /  │  │  [live map / chart]      │                    │
-│  │    RTK FIXED /  │  │                          │                    │
-│  │     NO FIX)     │  │                          │                    │
-│  └─────────────────┘  │                          │                    │
-│  Position             │                          │                    │
-│  Quality (DOP)        │                          │                    │
-│  Reference Error      │                          │                    │
-│  Ephemeris counts     │                          │                    │
-│  Session Logging      │                          │                    │
-│  Map / Scatter cfg    │                          │                    │
-├───────────────────────┴──────────────────────────┴────────────────────┤
-│  BOTTOM DOCK — Console log (timestamped, scrollable)                  │
-└──────────────────────────────────────────────────────────────────────┘
-```
+![Program GUI](./images/Program%20GUI.png)
 
 ### Toolbar
 
@@ -109,7 +85,7 @@ The interface is modelled on u-blox u-center 2 with a dark theme, dockable panel
 | **RTCM+NMEA** | MSM4 + ephemeris + GGA/RMC for automatic reference comparison |
 | **Base port / baud** | Serial port for the optional base station receiver |
 | **Connect Base** | Opens base station connection |
-| **SPS / DGNSS / RTK** | Switches active positioning mode; active button is highlighted |
+| **SPS / DGNSS / RTK** | Switches active positioning mode; only SPS is currently operational — DGNSS and RTK buttons are present but not yet implemented |
 | **Record** | Starts JSONL session logging; button shows **Stop** while active |
 | **Refresh Ports** | Re-scans all serial ports |
 
@@ -145,7 +121,7 @@ Shows every tracked satellite updated each epoch:
 | **Map** | Live rover track on OpenStreetMap (or Google Maps); reference point shown if available |
 | **Signal** | Vertical CNR bar chart, constellation-grouped, colour-coded by signal strength |
 | **Scatter** | ENU scatter plot of all rover positions relative to the reference, with CEP50 circle |
-| **DOP / 2D** | Scrolling 5-minute time series of HDOP, VDOP, and live 2D error (m) |
+| **DOP / 2D** | Scrolling time series of HDOP, VDOP, and live 2D error (m); selectable window from 5 min to 12 hr |
 
 ### Bottom Dock — Console
 
@@ -155,57 +131,39 @@ Time-stamped log of every epoch solution, connection events, configuration chang
 
 ## 4. Connecting the Receiver
 
-1. Plug the LC29HBA into USB. On macOS it appears as `/dev/cu.usbmodemXXXX`; on Linux as `/dev/ttyUSBX` or `/dev/ttyACMX`; on Windows as `COMX`.
+1. Plug the receiver into USB. On macOS it appears as `/dev/cu.usbmodemXXXX`; on Linux as `/dev/ttyUSBX` or `/dev/ttyACMX`; on Windows as `COMX`.
 2. Click **Refresh Ports** — the dropdown lists all detected ports with their descriptions.
-3. Select the port. Leave baud at **115200** (LC29HBA default).
+3. Select the port and set the baud rate to match your receiver's configured output rate (commonly 115200).
 4. Click **Connect**. The button turns red with a disconnect icon. The console prints `Rover connected: /dev/cu.usbmodem... @ 115200`.
 5. If no ports appear, check USB cable and driver. On macOS you may need `CP210x` or `CH340` USB-serial drivers.
 
 ---
 
-## 5. Receiver Configuration Modes
+## 5. Required Receiver Output
 
-After connecting, choose how the receiver should output data. The app sends Quectel **PAIR434** configuration commands over the same serial port.
+The engine is receiver-agnostic — it reads whatever RTCM3 the receiver streams. **Configure your receiver using its own software before connecting.** The engine begins processing as soon as valid RTCM frames arrive on the serial port.
 
-### RTCM Only
+| RTCM message | Content | Required for |
+|---|---|---|
+| 1074 | GPS MSM4 observations | GPS |
+| 1084 | GLONASS MSM4 observations | GLONASS |
+| 1094 | Galileo MSM4 observations | Galileo |
+| 1124 | BeiDou MSM4 observations | BeiDou |
+| 1019 | GPS broadcast ephemeris | GPS |
+| 1020 | GLONASS broadcast ephemeris | GLONASS |
+| 1042 | BeiDou broadcast ephemeris | BeiDou |
+| 1046 | Galileo I/NAV broadcast ephemeris | Galileo |
+| GGA / RMC (NMEA) | Receiver's own position fix | Optional — enables reference accuracy display |
 
-```
-[RTCM Only] button
-```
-
-Disables all NMEA sentences (GGA, GLL, GSA, GSV, RMC, VTG, ZDA) and enables:
-- **1074** GPS MSM4 observations
-- **1084** GLONASS MSM4 observations
-- **1094** Galileo MSM4 observations
-- **1124** BeiDou MSM4 observations
-- **1019** GPS broadcast ephemeris
-- **1020** GLONASS broadcast ephemeris
-- **1042** BeiDou broadcast ephemeris
-- **1046** Galileo I/NAV broadcast ephemeris
-
-Use this when you only care about the computed position and do not need the receiver's own fix for comparison.
-
-### RTCM + NMEA (Recommended for accuracy evaluation)
-
-```
-[RTCM+NMEA] button
-```
-
-Same as RTCM Only, plus enables:
-- **GGA** at 1 Hz — provides the receiver's own position fix (used as the reference truth)
-- **RMC** at 1 Hz — provides speed and course
-
-The app automatically extracts GGA/RMC from the mixed stream, stores the reference position, and computes 2D/3D error each epoch. This is the recommended mode for benchmarking.
-
-> **Note:** Configuration commands follow Quectel firmware version 3.x syntax. If commands fail (shown in the console), verify your firmware version and check `serial_handler.py`.
+Enable all constellations you want the engine to track. Any constellation whose MSM4 or ephemeris messages are absent will simply not contribute to the solution.
 
 ---
 
 ## 6. Positioning Modes
 
-Select with the **SPS / DGNSS / RTK** buttons in the toolbar.
+> **Only SPS is currently implemented.** The DGNSS and RTK toolbar buttons exist as placeholders for future work — selecting them has no effect on the solution.
 
-### SPS — Standard Positioning Service
+### SPS — Standard Positioning Service (active)
 
 Computes position from rover observations alone. No base station required.
 
@@ -223,17 +181,13 @@ Computes position from rover observations alone. No base station required.
 
 **Minimum satellites required:** 4 (with GPS only); multi-constellation improves both accuracy and availability.
 
-### DGNSS — Differential GNSS (stub)
+### DGNSS — Differential GNSS (not yet implemented)
 
-Requires a base station (second LC29HBA at a known position). Will apply pseudorange corrections derived from the base station's known position vs its measured ranges. Expected accuracy: sub-metre.
+**Status:** Planned. Will apply pseudorange corrections from a co-located base station, targeting sub-metre accuracy.
 
-**Status:** Architecture is wired; implementation pending.
+### RTK — Real-Time Kinematic (not yet implemented)
 
-### RTK — Real-Time Kinematic (stub)
-
-Requires a base station. Will form double-difference carrier phase observations and resolve integer ambiguities using LAMBDA, targeting 2 cm accuracy.
-
-**Status:** Interface is wired; full implementation pending.
+**Status:** Planned. Will use double-difference carrier phase observations with LAMBDA integer ambiguity resolution, targeting ~2 cm accuracy.
 
 ---
 
@@ -268,12 +222,24 @@ Each dot is one epoch's position in East-North metres relative to the reference.
 
 ### DOP / 2D Time Series (DOP/2D tab)
 
-Scrolling 5-minute window showing:
+Scrolling time series showing three traces:
 - **HDOP** (blue) — horizontal dilution of precision; reflects satellite geometry quality
 - **VDOP** (orange) — vertical dilution of precision
 - **2D Error** (green) — live horizontal distance between the computed position and the receiver's NMEA reference, in metres. Only plotted when a reference is available (RTCM+NMEA mode).
 
 HDOP < 2.0 is excellent; > 4.0 indicates poor satellite geometry.
+
+**Window duration selector** — a drop-down in the top-right of the panel lets you choose the visible time range:
+
+| Option | Duration |
+|--------|----------|
+| 5 min  | 300 s    |
+| 10 min | 600 s    |
+| 30 min | 1 800 s  |
+| 1 hr   | 3 600 s  |
+| 12 hr  | 43 200 s |
+
+Up to 12 hours of history is retained in memory regardless of which window is selected. Switching to a wider window immediately reveals the full recorded history. X-axis labels show time-ago (e.g. `-30m`, `-1h`, `-1h30m`) with **now** pinned to the right edge.
 
 ---
 
@@ -337,7 +303,7 @@ When no reference is available, the `ref=` and `2D=` fields are omitted.
 
 ### How the reference is obtained
 
-When **RTCM+NMEA** mode is configured, the receiver outputs GGA and RMC sentences on the same serial port alongside the RTCM3 binary stream. The app separates them (RTCM3 frames start with `0xD3`, NMEA lines start with `$`), parses GGA for latitude/longitude/altitude and RMC for speed/course, and maintains a merged reference position that updates at 1 Hz.
+When **RTCM+NMEA** mode is configured on receiver, the receiver outputs GGA and RMC sentences on the same serial port alongside the RTCM3 binary stream. The app separates them (RTCM3 frames start with `0xD3`, NMEA lines start with `$`), parses GGA for latitude/longitude/altitude and RMC for speed/course, and maintains a merged reference position that updates at 1 Hz.
 
 ### How 2D error is computed
 
@@ -346,8 +312,6 @@ When **RTCM+NMEA** mode is configured, the receiver outputs GGA and RMC sentence
 3. Compute the ECEF difference vector `(ΔX, ΔY, ΔZ)`
 4. Rotate to the local East-North-Up frame at the reference point
 5. `2D error = √(East² + North²)`
-
-The conversion uses `e²` (first eccentricity squared = 0.00669438) in the Bowring iteration. Earlier versions incorrectly used `e′²` (second eccentricity squared = 0.00673950) which caused a **+138 m northward bias** in the displayed latitude at 53°N — the WLS ECEF was correct the whole time.
 
 ### What the numbers mean
 
@@ -500,14 +464,13 @@ The iteration uses **`e²`** (first eccentricity squared = 0.00669438). Using `e
 ### Connected but no ephemeris appearing
 
 - Confirm configuration was applied (console should show "Rover configured: RTCM...")
-- The LC29HBA takes up to 30 s to broadcast the first full ephemeris set after a cold start
+- Receivers typically take up to 30 s to broadcast the first full ephemeris set after a cold start
 - Check **Ephemeris** panel counts — if GPS is 0 after 60 s, the receiver may not have sky visibility
 
 ### Only GPS satellites tracked/used
 
 - This is expected on first connection; Galileo/BeiDou/GLONASS ephemeris arrives later
 - GLONASS appears once RTCM 1020 messages arrive (needed for frequency channel numbers)
-- If only GPS appears after several minutes, check that the receiver is configured with `PAIR434,1084,1` (GLONASS MSM4) — verify in the console
 
 ### Satellites tracked but "No Fix"
 
@@ -516,20 +479,10 @@ The iteration uses **`e²`** (first eccentricity squared = 0.00669438). Using `e
 - Check signal quality — CNR < 25 dB-Hz satellites are heavily down-weighted
 - Check for `Keplerian computation error` in the console (indicates bad ephemeris data)
 
-### Position jumps by ~138 m in latitude after an update
-
-- This was a bug in `ecef_to_lla` (using `e′²` instead of `e²`). Fixed in v1.0.0.
-
 ### 2D error reported as very large (>1 km)
 
 - If reference is from GGA while the receiver is still acquiring (low-accuracy NMEA fix), the reference itself may be wrong
 - Wait for the receiver's own fix quality to stabilise (fix quality ≥ 1 in GGA)
-
-### App title shows "Python" in macOS Dock
-
-- This is normal without a macOS `.app` bundle
-- Running from `launch_gnss_engine.command` applies the `GNSS Engine` display name via `NSBundle` (requires `pyobjc` — `pip install pyobjc-framework-Cocoa`)
-- Without pyobjc, the Qt `setApplicationDisplayName` call still sets the menu bar name; the Dock may show "Python" until the first window appears
 
 ### High CPU usage
 

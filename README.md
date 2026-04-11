@@ -1,9 +1,10 @@
 # GNSS Positioning Engine
 
-A software-defined GNSS positioning engine that computes receiver position entirely in software from raw RTCM3 measurements. The Quectel LC29HBA hardware is used purely as a measurement front-end — all satellite orbit computation, atmospheric corrections, and position solutions run in this codebase.
+A software-defined GNSS positioning engine that computes receiver position entirely in software from raw RTCM3 measurements. Any GNSS receiver that outputs RTCM3 MSM4 observations and broadcast ephemeris can serve as the measurement front-end — all satellite orbit computation, atmospheric corrections, and position solutions run in this codebase.
 
-> **Current accuracy:** ~2 m 2D (SPS, GPS-only, Hatch-smoothed) against the receiver's own NMEA solution.  
-> Built as a learning platform and stepping stone toward full RTK at centimetre level.
+> **Current status:** SPS (Standard Positioning Service) is fully implemented and operational.  
+> **Current accuracy:** ~2 m 2D (GPS-only, Hatch-smoothed) against the receiver's own NMEA solution.  
+> DGNSS and RTK are planned but not yet implemented.
 
 ---
 
@@ -27,7 +28,7 @@ Most GNSS projects treat the receiver as a black box that outputs NMEA fixes. Th
 ## Architecture
 
 ```
-LC29HBA (Rover)                    LC29HBA (Base)  [optional]
+GNSS Receiver (Rover)              GNSS Receiver (Base)  [optional]
     │ RTCM3 binary                     │ RTCM3 binary
     ▼                                  ▼
 ┌──────────────┐               ┌──────────────┐
@@ -112,7 +113,7 @@ gnss-positioning-engine/
 │   │   ├── constants.py            # WGS84, PZ-90, signal frequencies, RTCM IDs
 │   │   ├── data_types.py           # Dataclasses: observations, ephemeris, solutions
 │   │   ├── pipeline.py             # Central coordinator
-│   │   ├── serial_handler.py       # Threaded serial I/O + LC29HBA config
+│   │   ├── serial_handler.py       # Threaded serial I/O + receiver config
 │   │   └── session_logger.py       # JSONL event recording
 │   ├── parsers/
 │   │   ├── bit_reader.py           # Bit-level RTCM3 field reader
@@ -144,7 +145,7 @@ gnss-positioning-engine/
 ### Requirements
 
 - Python 3.10+
-- Quectel LC29HBA (one for SPS/DGNSS, two for RTK)
+- A GNSS receiver capable of outputting RTCM3 MSM4 observations and broadcast ephemeris for all desired constellations
 - USB–UART adapter or direct USB
 
 ### Install
@@ -178,14 +179,14 @@ Or on macOS, double-click `launch_gnss_engine.command` in Finder.
 
 ## Accuracy
 
-Tested with Quectel LC29HBA at 53°N (Alberta, Canada):
+Tested at 53°N (Alberta, Canada):
 
 | Mode | 2D Error (vs NMEA) | Satellites | Notes |
 |---|---|---|---|
 | SPS GPS-only | ~2 m | 8–10 | After ~100 s Hatch filter warm-up |
 | SPS multi-GNSS | expected 1–2 m | 15–22 | Once GLONASS/Galileo/BeiDou ephemeris collected |
-| DGNSS | sub-metre | — | Planned |
-| RTK Fixed | ~2 cm | — | Planned |
+| DGNSS | — | — | Not yet implemented |
+| RTK Fixed | — | — | Not yet implemented |
 
 ---
 

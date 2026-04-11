@@ -4,7 +4,7 @@ GNSS Positioning Engine — Main Entry Point.
 
 A software-defined GNSS positioning engine that computes position
 from raw RTCM3 measurements (pseudorange, carrier phase, ephemeris)
-using LC29HBA receivers purely for measurement acquisition.
+using any GNSS receiver that outputs RTCM3 as measurement front-end.
 
 Supports: GPS (L1/L5), Galileo (E1/E5a), GLONASS (L1/L2), BeiDou (B1/B2a)
 Modes:    SPS (implemented), DGNSS (stub), RTK (stub)

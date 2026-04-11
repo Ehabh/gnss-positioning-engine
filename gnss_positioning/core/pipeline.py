@@ -147,22 +147,14 @@ class GNSSPipeline:
             self.on_status(f"Base connected: {port}")
         return success
 
-    def configure_rover_rtcm(self) -> bool:
-        """Configure rover receiver for RTCM-only output."""
-        return self.rover_serial.configure_lc29h_rtcm_only()
-
-    def configure_rover_rtcm_with_reference(self) -> bool:
-        """Configure rover for RTCM + GGA/RMC reference stream."""
-        return self.rover_serial.configure_lc29h_rtcm_with_nmea_reference()
-
     def configure_base_station(self, x: float, y: float, z: float) -> bool:
-        """Configure base receiver as fixed base station."""
+        """Register base station ECEF position for DGNSS/RTK engines."""
         self.base_info = BaseStationInfo(
             station_id=0, x_ecef=x, y_ecef=y, z_ecef=z
         )
         self._dgnss_engine.set_base_station(self.base_info)
         self._rtk_engine.set_base_station(self.base_info)
-        return self.base_serial.configure_lc29h_base_station(x, y, z)
+        return True
 
     def disconnect_all(self):
         """Disconnect all serial connections."""

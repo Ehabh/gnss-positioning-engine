@@ -1,7 +1,7 @@
 """
 Serial Port Handler for GNSS Receivers.
 
-Manages serial connections to LC29HBA receivers, including:
+Manages serial connections to GNSS receivers, including:
     - Port discovery and enumeration
     - Threaded reading with buffering
     - Connection management
@@ -91,7 +91,7 @@ class SerialHandler:
 
         Args:
             port: Serial port path (e.g., '/dev/ttyUSB0', 'COM3')
-            baudrate: Baud rate (LC29HBA default: 115200)
+            baudrate: Baud rate (typical default: 115200)
             timeout: Read timeout [s]
 
         Returns:
@@ -177,125 +177,6 @@ class SerialHandler:
             except serial.SerialException as e:
                 logger.error(f"{self.name}: Send error: {e}")
                 return False
-
-    def send_nmea_command(self, command: str) -> bool:
-        """Send an NMEA-format command with checksum.
-
-        Args:
-            command: Command without $ and *checksum (e.g., 'PAIR432,1')
-
-        Returns:
-            True if sent
-        """
-        # Compute NMEA checksum (XOR of all characters between $ and *)
-        checksum = 0
-        for ch in command:
-            checksum ^= ord(ch)
-
-        msg = f"${command}*{checksum:02X}\r\n"
-        return self.send(msg.encode('ascii'))
-
-    def configure_lc29h_rtcm_only(self) -> bool:
-        """Configure LC29HBA for RTCM-only output.
-
-        Disables all NMEA sentences and enables RTCM output.
-        Uses Quectel PAIR commands.
-        """
-        commands = [
-            # Disable all NMEA messages
-            "PAIR062,0,0",   # GGA off
-            "PAIR062,1,0",   # GLL off
-            "PAIR062,2,0",   # GSA off
-            "PAIR062,3,0",   # GSV off
-            "PAIR062,4,0",   # RMC off
-            "PAIR062,5,0",   # VTG off
-            # Enable RTCM MSM4 output for all constellations
-            "PAIR434,1074,1",  # GPS MSM4
-            "PAIR434,1084,1",  # GLONASS MSM4
-            "PAIR434,1094,1",  # Galileo MSM4
-            "PAIR434,1124,1",  # BeiDou MSM4
-            # Enable ephemeris output
-            "PAIR434,1019,1",  # GPS ephemeris
-            "PAIR434,1020,1",  # GLONASS ephemeris
-            "PAIR434,1042,1",  # BeiDou ephemeris
-            "PAIR434,1046,1",  # Galileo ephemeris
-        ]
-
-        success = True
-        for cmd in commands:
-            if not self.send_nmea_command(cmd):
-                success = False
-            time.sleep(0.1)  # Small delay between commands
-
-        return success
-
-    def configure_lc29h_rtcm_with_nmea_reference(self) -> bool:
-        """Configure receiver for RTCM + reference NMEA (GGA/RMC).
-
-        Keeps GGA and RMC enabled so the app can auto-detect a receiver
-        truth/reference trajectory while still consuming RTCM observations.
-        """
-        commands = [
-            # NMEA output: keep only sentences used for reference.
-            "PAIR062,0,1",   # GGA on
-            "PAIR062,1,0",   # GLL off
-            "PAIR062,2,0",   # GSA off
-            "PAIR062,3,0",   # GSV off
-            "PAIR062,4,1",   # RMC on
-            "PAIR062,5,0",   # VTG off
-            # RTCM observation output
-            "PAIR434,1074,1",  # GPS MSM4
-            "PAIR434,1084,1",  # GLONASS MSM4
-            "PAIR434,1094,1",  # Galileo MSM4
-            "PAIR434,1124,1",  # BeiDou MSM4
-            # Ephemeris output
-            "PAIR434,1019,1",
-            "PAIR434,1020,1",
-            "PAIR434,1042,1",
-            "PAIR434,1046,1",
-        ]
-
-        success = True
-        for cmd in commands:
-            if not self.send_nmea_command(cmd):
-                success = False
-            time.sleep(0.1)
-        return success
-
-    def configure_lc29h_base_station(self, x: float, y: float, z: float) -> bool:
-        """Configure LC29HBA as a base station.
-
-        Sets the receiver to fixed position mode and enables
-        RTCM output for corrections.
-
-        Args:
-            x, y, z: Known ECEF position [m]
-        """
-        commands = [
-            # Set survey-in or fixed position mode
-            # This is a placeholder - actual LC29H commands may differ
-            f"PAIR432,1",      # Enable base station mode
-            # Set known position (ECEF)
-            f"PAIR433,{x:.4f},{y:.4f},{z:.4f}",
-            # Enable RTCM output
-            "PAIR434,1005,1",  # Station ARP
-            "PAIR434,1074,1",  # GPS MSM4
-            "PAIR434,1084,1",  # GLONASS MSM4
-            "PAIR434,1094,1",  # Galileo MSM4
-            "PAIR434,1124,1",  # BeiDou MSM4
-            "PAIR434,1019,1",  # GPS ephemeris
-            "PAIR434,1020,1",  # GLONASS ephemeris
-            "PAIR434,1042,1",  # BeiDou ephemeris
-            "PAIR434,1046,1",  # Galileo ephemeris
-        ]
-
-        success = True
-        for cmd in commands:
-            if not self.send_nmea_command(cmd):
-                success = False
-            time.sleep(0.1)
-
-        return success
 
     def _read_loop(self):
         """Background thread: continuously read from serial port."""
