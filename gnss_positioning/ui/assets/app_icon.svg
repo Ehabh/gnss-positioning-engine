@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <!-- Background circle -->
+  <circle cx="128" cy="128" r="128" fill="#0D1117"/>
+  <!-- Satellite dish body -->
+  <ellipse cx="110" cy="165" rx="54" ry="38" fill="none" stroke="#58A6FF" stroke-width="8" stroke-linecap="round"/>
+  <!-- Dish face (filled arc) -->
+  <path d="M 60 155 Q 110 100 160 155" fill="none" stroke="#58A6FF" stroke-width="8" stroke-linecap="round"/>
+  <!-- Dish mount arm -->
+  <line x1="110" y1="165" x2="110" y2="195" stroke="#58A6FF" stroke-width="7" stroke-linecap="round"/>
+  <!-- Dish base -->
+  <line x1="88" y1="195" x2="132" y2="195" stroke="#58A6FF" stroke-width="7" stroke-linecap="round"/>
+  <!-- Feed horn -->
+  <circle cx="110" cy="145" r="7" fill="#58A6FF"/>
+  <!-- Signal arcs from feed horn -->
+  <path d="M 126 128 Q 148 118 158 100" fill="none" stroke="#3FB950" stroke-width="4" stroke-linecap="round" opacity="0.9"/>
+  <path d="M 133 120 Q 160 107 172 85" fill="none" stroke="#3FB950" stroke-width="4" stroke-linecap="round" opacity="0.7"/>
+  <path d="M 140 112 Q 172 96 186 70" fill="none" stroke="#3FB950" stroke-width="4" stroke-linecap="round" opacity="0.5"/>
+  <!-- Satellite 1 (GPS) -->
+  <g transform="translate(170,55)">
+    <rect x="-18" y="-6" width="36" height="12" rx="3" fill="#1C2128" stroke="#58A6FF" stroke-width="2.5"/>
+    <rect x="-30" y="-3" width="10" height="6" rx="1" fill="#58A6FF" opacity="0.7"/>
+    <rect x="20" y="-3" width="10" height="6" rx="1" fill="#58A6FF" opacity="0.7"/>
+    <circle cx="0" cy="0" r="3.5" fill="#58A6FF"/>
+  </g>
+  <!-- Satellite 2 (Galileo) -->
+  <g transform="translate(200,95)">
+    <rect x="-14" y="-5" width="28" height="10" rx="2" fill="#1C2128" stroke="#3FB950" stroke-width="2"/>
+    <rect x="-23" y="-2.5" width="8" height="5" rx="1" fill="#3FB950" opacity="0.7"/>
+    <rect x="15" y="-2.5" width="8" height="5" rx="1" fill="#3FB950" opacity="0.7"/>
+    <circle cx="0" cy="0" r="2.5" fill="#3FB950"/>
+  </g>
+  <!-- Satellite 3 (GLONASS) -->
+  <g transform="translate(195,138)">
+    <rect x="-13" y="-4.5" width="26" height="9" rx="2" fill="#1C2128" stroke="#F85149" stroke-width="2"/>
+    <rect x="-21" y="-2" width="7" height="4" rx="1" fill="#F85149" opacity="0.7"/>
+    <rect x="14" y="-2" width="7" height="4" rx="1" fill="#F85149" opacity="0.7"/>
+    <circle cx="0" cy="0" r="2.5" fill="#F85149"/>
+  </g>
+  <!-- Signal dots / pulses -->
+  <circle cx="140" cy="108" r="3" fill="#3FB950" opacity="0.9"/>
+  <circle cx="154" cy="95" r="2.5" fill="#3FB950" opacity="0.7"/>
+  <circle cx="167" cy="81" r="2" fill="#3FB950" opacity="0.5"/>
+</svg>

@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <!-- Signal tower -->
+  <line x1="12" y1="20" x2="12" y2="13" stroke="#58A6FF" stroke-width="1.8"/>
+  <path d="M8 17h8" stroke="#58A6FF" stroke-width="1.5"/>
+  <!-- Signal arcs -->
+  <path d="M9 11a4 4 0 0 1 6 0" stroke="#58A6FF" stroke-width="1.8" fill="none"/>
+  <path d="M6.5 8.5a8 8 0 0 1 11 0" stroke="#58A6FF" stroke-width="1.8" fill="none" opacity="0.6"/>
+  <!-- Dot at top -->
+  <circle cx="12" cy="6.5" r="1.5" fill="#58A6FF"/>
+</svg>

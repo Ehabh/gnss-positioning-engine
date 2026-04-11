@@ -1,0 +1,6 @@
+# GNSS Positioning Engine - Dependencies
+numpy>=1.24.0
+pyserial>=3.5
+PyQt6>=6.5.0
+# Optional (enables live map tab under PyQt6)
+PyQt6-WebEngine>=6.5.0

@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+
+# Virtual environments
+venv/
+env/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+*.icns.bak
+gnss_positioning/ui/assets/*.iconset/
+
+# Windows
+Thumbs.db
+desktop.ini
+
+# Logs & recordings
+*.log
+logs/
+recordings/
+*.jsonl
+
+# GNSS data files
+*.rinex
+*.obs
+*.nav
+*.ubx
+*.rnx
+*.crx
+
+# Packaging artefacts
+*.spec
+*.app/
