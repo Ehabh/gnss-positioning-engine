@@ -82,14 +82,14 @@ The interface is modelled on u-blox u-center 2 with a dark theme, dockable panel
 │  LEFT DOCK            │  CENTRAL TABS            │  RIGHT DOCK        │
 │                       │                          │                    │
 │  ┌─────────────────┐  │  Map | Signal | Scatter  │  Satellite Table  │
-│  │   FIX BADGE     │  │        | DOP/σ           │  PRN · Sys · CNR  │
+│  │   FIX BADGE     │  │        | DOP/2D          │  PRN · Sys · CNR  │
 │  │   (SPS / DGNSS  │  │                          │  Used · Lock(s)   │
 │  │    RTK FLOAT /  │  │  [live map / chart]      │                    │
 │  │    RTK FIXED /  │  │                          │                    │
 │  │     NO FIX)     │  │                          │                    │
 │  └─────────────────┘  │                          │                    │
 │  Position             │                          │                    │
-│  Quality (DOP/σ)      │                          │                    │
+│  Quality (DOP)        │                          │                    │
 │  Reference Error      │                          │                    │
 │  Ephemeris counts     │                          │                    │
 │  Session Logging      │                          │                    │
@@ -119,7 +119,7 @@ The interface is modelled on u-blox u-center 2 with a dark theme, dockable panel
 |---|---|
 | **Fix Badge** | Large coloured badge showing current fix type, satellite count, and GPS TOW |
 | **Position** | Latitude, longitude, altitude (ellipsoidal) |
-| **Quality** | HDOP, VDOP, PDOP, horizontal sigma (σH), vertical sigma (σV) |
+| **Quality** | HDOP, VDOP, PDOP, horizontal sigma, vertical sigma |
 | **Reference Error** | Source (GGA/RMC), reference lat/lon/alt, live 2D error, live 3D error, RMS 2D, RMS 3D |
 | **Ephemeris** | Count of stored broadcast ephemerides per constellation |
 | **Session Logging** | Log file path, start/stop button, live recording indicator |
@@ -145,7 +145,7 @@ Shows every tracked satellite updated each epoch:
 | **Map** | Live rover track on OpenStreetMap (or Google Maps); reference point shown if available |
 | **Signal** | Vertical CNR bar chart, constellation-grouped, colour-coded by signal strength |
 | **Scatter** | ENU scatter plot of all rover positions relative to the reference, with CEP50 circle |
-| **DOP / σ** | Scrolling 5-minute time series of HDOP, VDOP, and σH |
+| **DOP / 2D** | Scrolling 5-minute time series of HDOP, VDOP, and live 2D error (m) |
 
 ### Bottom Dock — Console
 
@@ -266,12 +266,12 @@ Used satellites (in the WLS solution) render at full opacity; tracked-only satel
 
 Each dot is one epoch's position in East-North metres relative to the reference. The circle is the CEP50 estimate (radius containing 50% of solutions, ≈ 0.59 × RMS 2D). Colour matches the fix type badge.
 
-### DOP / σ Time Series (DOP/σ tab)
+### DOP / 2D Time Series (DOP/2D tab)
 
 Scrolling 5-minute window showing:
-- **HDOP** (blue) — horizontal dilution of precision
+- **HDOP** (blue) — horizontal dilution of precision; reflects satellite geometry quality
 - **VDOP** (orange) — vertical dilution of precision
-- **σH** (green dashed) — horizontal position sigma from the WLS covariance
+- **2D Error** (green) — live horizontal distance between the computed position and the receiver's NMEA reference, in metres. Only plotted when a reference is available (RTCM+NMEA mode).
 
 HDOP < 2.0 is excellent; > 4.0 indicates poor satellite geometry.
 

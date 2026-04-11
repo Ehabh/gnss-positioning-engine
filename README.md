@@ -93,7 +93,7 @@ LC29HBA (Rover)                    LC29HBA (Base)  [optional]
 │  Right dock · Satellite table (CNR/status)   │
 │  Bottom    · Console log                     │
 │  Tabs      · Map · Signal Bars · Scatter     │
-│            · DOP/σ time series               │
+│            · DOP/2D time series              │
 └──────────────────────────────────────────────┘
 ```
 

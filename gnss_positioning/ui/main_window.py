@@ -6,7 +6,7 @@ Design inspired by u-blox u-center 2:
   · Left dock: fix badge, position, quality, reference, ephemeris, logging
   · Right dock: satellite table (PRN, system, CNR, used status)
   · Bottom dock: message console
-  · Central tabs: Map | Signal Bars | Scatter | DOP/σ
+  · Central tabs: Map | Signal Bars | Scatter | DOP/2D
 """
 from __future__ import annotations
 
@@ -647,19 +647,19 @@ class SignalBarsWidget(QWidget):
 
 
 # ---------------------------------------------------------------------------
-# TimeSeriesWidget — scrolling DOP / accuracy time series
+# TimeSeriesWidget — scrolling HDOP / VDOP / 2D error time series
 # ---------------------------------------------------------------------------
 class TimeSeriesWidget(QWidget):
     WINDOW_S = 300   # seconds of history to display
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        # Deque of (unix_time, hdop, vdop, sigma_h)
+        # Deque of (unix_time, hdop, vdop, err_2d_m)
         self._data: deque = deque(maxlen=2000)
         self.setMinimumHeight(180)
 
-    def add_point(self, unix_t: float, hdop: float, vdop: float, sigma_h: float):
-        self._data.append((unix_t, hdop, vdop, sigma_h))
+    def add_point(self, unix_t: float, hdop: float, vdop: float, err_2d: float):
+        self._data.append((unix_t, hdop, vdop, err_2d))
         self.update()
 
     def clear(self):
@@ -691,14 +691,16 @@ class TimeSeriesWidget(QWidget):
         t0 = now - self.WINDOW_S
 
         # Visible points
-        pts = [(t, hd, vd, sh) for t, hd, vd, sh in self._data if t >= t0]
+        pts = [(t, hd, vd, e2) for t, hd, vd, e2 in self._data if t >= t0]
         if not pts:
             p.end()
             return
 
-        # Y range
-        all_vals = [v for _, hd, vd, sh in pts for v in (hd, vd, sh)]
-        y_max = max(max(all_vals) * 1.15, 3.0)
+        # Y range — DOP is dimensionless, 2D error is in metres; they share the
+        # same axis because typical DOP (1–5) and error (1–5 m) are similar.
+        all_vals = [v for _, hd, vd, e2 in pts for v in (hd, vd, e2)
+                    if v is not None and not math.isnan(v)]
+        y_max = max(max(all_vals) * 1.15, 3.0) if all_vals else 3.0
         y_min = 0.0
 
         def tx(t_unix):
@@ -731,11 +733,11 @@ class TimeSeriesWidget(QWidget):
             elapsed = int(now - t_pt)
             p.drawText(x - 10, MT + ph + 16, f"-{elapsed}s")
 
-        # Series: HDOP (blue), VDOP (orange), σH (green)
+        # Series: HDOP (blue), VDOP (orange), 2D Error (green)
         series = [
             (1, C['blue'],   'HDOP'),
             (2, C['orange'], 'VDOP'),
-            (3, C['green'],  'σH (m)'),
+            (3, C['green'],  '2D Error (m)'),
         ]
 
         for col_idx, col_hex, label in series:
@@ -743,10 +745,10 @@ class TimeSeriesWidget(QWidget):
             p.setPen(QPen(col, 2, _Qt_Solid))
             path = QPainterPath()
             first = True
-            for t, hd, vd, sh in pts:
-                vals = (None, hd, vd, sh)
+            for t, hd, vd, e2 in pts:
+                vals = (None, hd, vd, e2)
                 v = vals[col_idx]
-                if v is None or math.isnan(v):
+                if v is None or math.isnan(v) or v < 0:
                     first = True
                     continue
                 x, y = tx(t), ty(max(y_min, min(y_max, v)))
@@ -772,7 +774,7 @@ class TimeSeriesWidget(QWidget):
         p.setPen(QColor(C['dim']))
         p.translate(10, MT + ph // 2)
         p.rotate(-90)
-        p.drawText(-20, 0, "value")
+        p.drawText(-30, 0, "DOP / m")
         p.restore()
 
         p.end()
@@ -1317,7 +1319,7 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.map_view,    "🗺  Map")
         self.tabs.addTab(self.sig_bars,    "📶  Signal")
         self.tabs.addTab(self.scatter,     "·  Scatter")
-        self.tabs.addTab(self.time_series, "📈  DOP / σ")
+        self.tabs.addTab(self.time_series, "📈  DOP / 2D")
 
     # ------------------------------------------------------------------
     # Left dock — Fix & Position
@@ -1684,9 +1686,21 @@ class MainWindow(QMainWindow):
             self._qual_labels['sigma_h'].setText(f"{sol.sigma_horizontal:.3f} m")
             self._qual_labels['sigma_v'].setText(f"{sol.sigma_vertical:.3f} m")
 
-            # Time series
-            self.time_series.add_point(
-                _time.time(), sol.dop.hdop, sol.dop.vdop, sol.sigma_horizontal)
+            # Time series — pass live 2D error if reference available, else -1
+            ref = self.pipeline.reference_position
+            _e2d = -1.0
+            if ref and sol.x != 0.0:
+                try:
+                    _rlat = float(ref['latitude']); _rlon = float(ref['longitude'])
+                    _ralt = float(ref.get('altitude', 0.0))
+                    _re = lla_to_ecef(_rlat, _rlon, _ralt)
+                    _enu = ecef_to_enu(float(sol.x - _re[0]),
+                                       float(sol.y - _re[1]),
+                                       float(sol.z - _re[2]), _rlat, _rlon)
+                    _e2d = float(np.hypot(_enu[0], _enu[1]))
+                except Exception:
+                    pass
+            self.time_series.add_point(_time.time(), sol.dop.hdop, sol.dop.vdop, _e2d)
 
             # Scatter + map
             self.scatter.add_point(sol.position_ecef, sol.fix_type)
