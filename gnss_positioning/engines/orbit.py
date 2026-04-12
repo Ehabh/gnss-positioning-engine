@@ -231,10 +231,19 @@ def compute_glonass_satellite(eph: GLONASSEphemeris,
         SatelliteState
     """
     try:
-        # Time difference from reference epoch
-        dt = t_transmit - eph.tb
+        # eph.tb is in Moscow-time seconds-of-day (0..86400).
+        # t_transmit is GPS TOW (0..604800).
+        # Convert t_transmit to Moscow seconds-of-day before computing dt.
+        #   Moscow TOD = (GPS_TOW + 10782) mod 86400
+        #   (10782 = 10800 Moscow offset − 18 GPS-UTC leap seconds)
+        moscow_tod = (t_transmit + 10782.0) % 86400.0
+        dt = moscow_tod - eph.tb
+        if dt > 43200.0:
+            dt -= 86400.0
+        elif dt < -43200.0:
+            dt += 86400.0
+
         if abs(dt) > 3600:
-            # Ephemeris too old
             logger.warning(f"GLONASS R{eph.svn:02d} ephemeris age: {dt:.0f}s")
             if abs(dt) > 7200:
                 return None

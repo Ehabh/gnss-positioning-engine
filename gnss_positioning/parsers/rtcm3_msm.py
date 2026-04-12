@@ -1,9 +1,12 @@
 """
-RTCM3 MSM4 Message Decoder.
+RTCM3 MSM4 and MSM7 Message Decoder.
 
-MSM4 provides: full pseudorange, full carrier phase, Doppler, and CNR.
-This decoder handles messages 1074 (GPS), 1084 (GLONASS), 1094 (Galileo),
-1124 (BeiDou).
+MSM4 provides: full pseudorange, full carrier phase, lock time, half-cycle, CNR.
+MSM7 provides: same as MSM4 but with higher-resolution fields and Doppler.
+
+Handled message types:
+    MSM4: 1074 (GPS), 1084 (GLONASS), 1094 (Galileo), 1124 (BeiDou)
+    MSM7: 1077 (GPS), 1087 (GLONASS), 1097 (Galileo), 1127 (BeiDou)
 
 Reference: RTCM Standard 10403.3, Section 3.5 (MSM Messages)
 """
@@ -80,6 +83,10 @@ P2_24 = 2**-24
 P2_29 = 2**-29
 P2_31 = 2**-31
 
+# MSM variant → message-type set
+_MSM4_TYPES = frozenset({1074, 1084, 1094, 1124})
+_MSM7_TYPES = frozenset({1077, 1087, 1097, 1127})
+
 
 class MSM4Decoder:
     """Decoder for RTCM3 MSM4 messages.
@@ -102,10 +109,10 @@ class MSM4Decoder:
 
     def decode(self, msg_type: int, data: bytes,
                current_week: int = 0) -> Optional[EpochObservations]:
-        """Decode an MSM4 message.
+        """Decode an MSM4 or MSM7 message.
 
         Args:
-            msg_type: RTCM message type (1074, 1084, 1094, 1124)
+            msg_type: RTCM message type (1074/1077, 1084/1087, 1094/1097, 1124/1127)
             data: Raw message data bytes (after frame header)
             current_week: Current GPS week number
 
@@ -117,15 +124,20 @@ class MSM4Decoder:
             logger.warning(f"Unknown MSM message type: {msg_type}")
             return None
 
+        is_msm7 = msg_type in _MSM7_TYPES
+        if is_msm7:
+            logger.debug(f"Decoding MSM7 message {msg_type} for {constellation.name}")
         try:
             reader = BitReader(data)
-            return self._decode_msm4(reader, constellation, current_week)
+            return self._decode_msm4(reader, constellation, current_week,
+                                     is_msm7=is_msm7)
         except Exception as e:
-            logger.error(f"MSM4 decode error (msg {msg_type}): {e}")
+            variant = "MSM7" if is_msm7 else "MSM4"
+            logger.error(f"{variant} decode error (msg {msg_type}): {e}")
             return None
 
     def _decode_msm4(self, reader: BitReader, constellation: Constellation,
-                      week: int) -> Optional[EpochObservations]:
+                      week: int, is_msm7: bool = False) -> Optional[EpochObservations]:
         """Internal MSM4 decoding."""
 
         # --- MSM Header ---
@@ -146,9 +158,14 @@ class MSM4Decoder:
             glonass_tod = dow * 86400.0 + tod_ms * 0.001
             epoch_time = (glonass_tod - 10782.0) % 604800.0
         else:
-            # GPS/Galileo/BeiDou: GPS epoch time in ms (30 bits)
+            # GPS / Galileo / BeiDou: 30-bit epoch time in ms.
+            # GPS and Galileo use GPS TOW directly.
+            # BeiDou uses BDT (BeiDou Time = GPS time − 14 s). The epoch_time
+            # is kept in BDT here so that satellite positions are computed at
+            # the correct BDT emission time. The pipeline accumulator adds 14 s
+            # to the BeiDou key to merge with GPS/Galileo epochs.
             epoch_ms = reader.read_uint(30)
-            epoch_time = epoch_ms * 0.001  # Convert to seconds (TOW)
+            epoch_time = epoch_ms * 0.001
 
         multiple_msg = reader.read_bool()      # Multiple message flag
         iods = reader.read_uint(3)             # Issue of data station
@@ -182,46 +199,84 @@ class MSM4Decoder:
         n_active_cells = sum(cell_mask)
 
         # --- Satellite Data ---
-        # Rough ranges (integer ms, 8 bits unsigned per satellite)
+        # Rough ranges: integer ms (8 bits unsigned per satellite, DF397)
         sat_rough_range_int = []
         for _ in range(n_sat):
             sat_rough_range_int.append(reader.read_uint(8))
 
-        # Rough ranges (fractional ms, 10 bits unsigned per satellite)
+        # Rough ranges: fractional ms (10 bits unsigned per satellite, DF398)
         sat_rough_range_frac = []
         for _ in range(n_sat):
             sat_rough_range_frac.append(reader.read_uint(10))
 
-        # Rough phase range rates (14 bits signed per satellite) - MSM4 doesn't have this
-        # MSM4 has no satellite phase range rate
+        # MSM7 only: rough phase range rate (14 bits signed per satellite, DF399)
+        # MSM4 does not include this field — skipping it is what caused the
+        # bit-misalignment that corrupted all pseudoranges when MSM7 was decoded
+        # as MSM4.
+        if is_msm7:
+            for _ in range(n_sat):
+                reader.read_int(14)   # discard rough phase range rate
 
         # --- Signal Data ---
-        # Fine pseudorange (15 bits signed per cell)
+        # Field widths and scales differ between MSM4 and MSM7:
+        #   MSM4 fine PR:    DF400  15 bits  scale 2^-24 ms
+        #   MSM7 fine PR:    DF405  20 bits  scale 2^-29 ms
+        #   MSM4 fine phase: DF401  22 bits  scale 2^-29 ms
+        #   MSM7 fine phase: DF406  24 bits  scale 2^-31 ms
+        #   MSM4 lock time:  DF402   4 bits  (indicator table)
+        #   MSM7 lock time:  DF407  10 bits  (indicator table, wider)
+        #   CNR:             DF403   6 bits  1 dB-Hz   (MSM4)
+        #                    DF408  10 bits  0.0625 dB-Hz (MSM7)
+        #   MSM7 also adds fine phase rate: DF404 15 bits per cell
+
+        if is_msm7:
+            pr_bits, pr_scale   = 20, P2_29          # DF405
+            cp_bits, cp_scale   = 24, P2_31          # DF406
+            lock_bits           = 10                  # DF407
+            cnr_bits            = 10                  # DF408
+            cnr_scale           = 0.0625             # dB-Hz per LSB
+        else:
+            pr_bits, pr_scale   = 15, P2_24          # DF400
+            cp_bits, cp_scale   = 22, P2_29          # DF401
+            lock_bits           = 4                   # DF402
+            cnr_bits            = 6                   # DF403
+            cnr_scale           = 1.0                # dB-Hz per LSB
+
+        # Fine pseudorange (signed per cell)
         sig_fine_pr = []
         for _ in range(n_active_cells):
-            sig_fine_pr.append(reader.read_int(15))
+            sig_fine_pr.append(reader.read_int(pr_bits))
 
-        # Fine carrier phase (22 bits signed per cell)
+        # Fine carrier phase (signed per cell)
         sig_fine_cp = []
         for _ in range(n_active_cells):
-            sig_fine_cp.append(reader.read_int(22))
+            sig_fine_cp.append(reader.read_int(cp_bits))
 
-        # Lock time indicator (4 bits per cell)
+        # Lock time indicator (unsigned per cell)
         sig_lock = []
         for _ in range(n_active_cells):
-            sig_lock.append(reader.read_uint(4))
+            sig_lock.append(reader.read_uint(lock_bits))
 
-        # Half-cycle ambiguity (1 bit per cell)
+        # Half-cycle ambiguity (1 bit per cell) — same in both MSM4 and MSM7
         sig_half_cycle = []
         for _ in range(n_active_cells):
             sig_half_cycle.append(reader.read_bool())
 
-        # CNR (6 bits per cell, resolution 1 dB-Hz)
+        # CNR (unsigned per cell)
         sig_cnr = []
         for _ in range(n_active_cells):
-            sig_cnr.append(reader.read_uint(6))
+            sig_cnr.append(reader.read_uint(cnr_bits) * cnr_scale)
+
+        # MSM7 only: fine phase range rate (15 bits signed per cell, DF404)
+        if is_msm7:
+            for _ in range(n_active_cells):
+                reader.read_int(15)   # discard fine phase range rate
 
         # --- Build Observations ---
+        # Compute invalid sentinels once (most-negative value for each field width)
+        pr_invalid = -(1 << (pr_bits - 1))
+        cp_invalid = -(1 << (cp_bits - 1))
+
         observations = []
         cell_idx = 0
 
@@ -248,7 +303,7 @@ class MSM4Decoder:
                     continue
 
                 # Fine pseudorange [m]
-                fine_pr = sig_fine_pr[cell_idx] * P2_24 * RANGE_MS
+                fine_pr = sig_fine_pr[cell_idx] * pr_scale * RANGE_MS
                 pseudorange = rough_range_m + fine_pr
 
                 # Get frequency for carrier phase conversion
@@ -262,16 +317,18 @@ class MSM4Decoder:
                 wavelength = C / freq
 
                 # Fine carrier phase [cycles]
-                fine_cp_ms = sig_fine_cp[cell_idx] * P2_29
+                fine_cp_ms = sig_fine_cp[cell_idx] * cp_scale
                 fine_cp_m = fine_cp_ms * RANGE_MS
                 # Total phase = rough_range / wavelength + fine_phase / wavelength
                 carrier_phase = rough_range_m / wavelength + fine_cp_m / wavelength
 
-                # CNR
+                # CNR — already scaled to dB-Hz by sig_cnr[cell_idx]
                 cnr = float(sig_cnr[cell_idx])
 
                 # Lock time (convert indicator to approximate seconds)
-                lock_time = self._lock_indicator_to_seconds(sig_lock[cell_idx])
+                lock_time = (self._lock_indicator_msm7(sig_lock[cell_idx])
+                             if is_msm7
+                             else self._lock_indicator_to_seconds(sig_lock[cell_idx]))
 
                 # Doppler - MSM4 doesn't directly provide Doppler
                 # We can estimate it from phase rate if available, set 0 for now
@@ -295,8 +352,8 @@ class MSM4Decoder:
                     cnr=cnr,
                     lock_time=lock_time,
                     half_cycle_ambiguity=sig_half_cycle[cell_idx],
-                    pseudorange_valid=(sig_fine_pr[cell_idx] != -16384),
-                    carrier_phase_valid=(sig_fine_cp[cell_idx] != -2097152),
+                    pseudorange_valid=(sig_fine_pr[cell_idx] != pr_invalid),
+                    carrier_phase_valid=(sig_fine_cp[cell_idx] != cp_invalid),
                 )
                 observations.append(obs)
                 cell_idx += 1
@@ -331,14 +388,37 @@ class MSM4Decoder:
 
     @staticmethod
     def _lock_indicator_to_seconds(indicator: int) -> float:
-        """Convert MSM4 lock time indicator (4 bits) to seconds.
+        """Convert MSM4 lock time indicator (4 bits, DF402) to seconds.
 
         Table 3.5-74 in RTCM 10403.3.
         """
-        # Simplified mapping
         thresholds = [0, 24, 72, 168, 360, 744, 937, 1500,
                       2400, 4800, 9600, 19200, 38400, 76800,
                       153600, 307200]
         if indicator < len(thresholds):
             return thresholds[indicator] / 1000.0
         return 307.2
+
+    @staticmethod
+    def _lock_indicator_msm7(indicator: int) -> float:
+        """Convert MSM7 lock time indicator (10 bits, DF407) to seconds.
+
+        The 10-bit indicator encodes lock time in ms directly:
+            lock_time_ms = 2^(indicator >> 4) * (indicator & 0x0F) - bias
+        Simplified: use the indicator directly scaled to a coarse bin.
+        RTCM 10403.3 Table 3.5-74 (extended).
+        """
+        # Decode DF407: lock_time = 2^(I>>4) * (1 + (I & 0xF)/4) - 1) ms
+        # For simplicity use the same mapping but extended to 10 bits
+        if indicator == 0:
+            return 0.0
+        # Coarse: indicator ≈ lock_ms / 2 for small values
+        # More precise: use formula from RTCM spec
+        try:
+            i = indicator
+            e = (i >> 4) & 0x3F          # 6 exponent bits
+            m = i & 0x0F                  # 4 mantissa bits
+            lock_ms = (1 << e) * (m + 1) - 1
+            return lock_ms / 1000.0
+        except Exception:
+            return float(indicator) / 1000.0

@@ -113,7 +113,7 @@ def decode_glonass_ephemeris(data: bytes) -> Optional[GLONASSEphemeris]:
         tk_s = r.read_uint(1) * 30      # 30-second intervals
         _bn_health = r.read_uint(1)
         _p2 = r.read_bool()
-        tb = r.read_uint(7) * 15 * 60   # Reference time [s] (15-min intervals)
+        tb = r.read_uint(7) * 15 * 60   # Reference time [s] (15-min intervals, Moscow TOD)
 
         # Velocity [km/s] -> [m/s]
         vx = r.read_int(24) * 2**-20 * 1000.0

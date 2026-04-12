@@ -197,6 +197,7 @@ BDS_GPS_OFFSET = BDS_EPOCH_UNIX - GPS_EPOCH_UNIX  # Offset in seconds
 # ==============================================================================
 
 ELEVATION_MASK_DEG = 10.0           # Default elevation mask [degrees]
+CNR_MASK_DBH = 25.0                 # Minimum CNR to use a satellite [dB-Hz]
 MAX_ITERATIONS = 20                 # Max iterations for least squares
 CONVERGENCE_THRESHOLD = 1e-4        # Position convergence threshold [m]
 INITIAL_POS_ECEF = np.array([0.0, 0.0, 0.0])  # Initial position guess (will be updated)

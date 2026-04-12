@@ -31,7 +31,7 @@ import logging
 from typing import List, Optional, Dict, Tuple
 
 from ..core.constants import (
-    C, Constellation, SignalType, ELEVATION_MASK_DEG,
+    C, Constellation, SignalType, ELEVATION_MASK_DEG, CNR_MASK_DBH,
     MAX_ITERATIONS, CONVERGENCE_THRESHOLD, PR_MIN, PR_MAX,
     SIGNAL_FREQUENCY,
     GPS_L1_FREQ, GPS_L5_FREQ,
@@ -197,6 +197,10 @@ class SPSEngine:
             sat_obs, epoch.timestamp_gps, epoch.week
         )
         if len(sat_states) < 4:
+            logger.warning(
+                f"Coarse pass: only {len(sat_states)} sats after prep "
+                f"(had {len(sat_obs)} from select); TOW={epoch.timestamp_gps:.3f}"
+            )
             solution.fix_type = FixType.NO_FIX
             return solution
 
@@ -253,6 +257,30 @@ class SPSEngine:
         for const, idx in const_indices.items():
             if const == Constellation.GPS:
                 clock_bias_gps = x_state[3 + idx] / C
+
+        # Sanity-check the ECEF result before accepting it.
+        # A valid position must be within ±500 km of Earth's surface
+        # (mean radius 6371 km). If the WLS diverged, reject the solution
+        # and clear the warm-start so the next epoch starts from scratch.
+        r = float(np.linalg.norm(pos_ecef))
+        if not (5_871_000.0 < r < 6_871_000.0):
+            logger.warning(
+                f"WLS position outside Earth surface (|r|={r/1e3:.0f} km) — "
+                "rejecting and clearing warm-start"
+            )
+            # Diagnostic: dump the satellite states and pseudoranges that caused divergence
+            for i, (ss, prc) in enumerate(zip(sat_states, pseudoranges)):
+                sp = ss.position_ecef
+                geom = float(np.linalg.norm(sp))
+                logger.debug(
+                    f"  sat[{i}] {ss.sat_id}: pos=({sp[0]/1e6:.3f},{sp[1]/1e6:.3f},{sp[2]/1e6:.3f}) Mm "
+                    f"|pos|={geom/1e3:.0f}km  PR_corr={prc/1e3:.0f}km  "
+                    f"elev={ss.elevation:.1f}°  cnr={sat_obs.get(ss.sat_id, {}).get('cnr', 0):.0f}dBHz"
+                )
+            self._last_position      = np.zeros(3)
+            self._last_clock_offsets = {}
+            solution.fix_type = FixType.NO_FIX
+            return solution
 
         self._last_position      = pos_ecef.copy()
         self._last_clock_offsets = {
@@ -367,6 +395,10 @@ class SPSEngine:
                 'svn':           svn,
                 'cnr':           max(o.cnr for o in obs_list),
                 'dual_freq':     dual_freq,
+                # Native constellation timestamp: BDT for BeiDou, GPS TOW for others.
+                # Used for t_transmit so satellite positions are computed in the
+                # correct time reference regardless of the merged epoch GPS TOW.
+                'obs_tow':       obs_list[0].timestamp_gps,
             }
 
         return result
@@ -419,8 +451,9 @@ class SPSEngine:
             (sat_states, pseudoranges, weights, constellations_present)
         """
         if receiver_pos is None:
-            receiver_pos = (self._last_position
-                            if np.any(self._last_position != 0) else None)
+            lp = self._last_position
+            r_last = float(np.linalg.norm(lp))
+            receiver_pos = lp if (5_871_000.0 < r_last < 6_871_000.0) else None
 
         sat_states:   List[SatelliteState] = []
         pseudoranges: List[float]          = []
@@ -433,12 +466,20 @@ class SPSEngine:
             pr        = obs['pseudorange']
             dual_freq = obs['dual_freq']
 
+            # GLONASS broadcasts in PZ-90 frame; WGS-84 alignment not yet
+            # implemented. Skip GLONASS to avoid corrupting the WLS solution.
+            if const == Constellation.GLONASS:
+                continue
+
             eph = self.eph_store.get_ephemeris(const, svn)
             if eph is None:
                 continue
 
             transit_time = pr / C
-            t_transmit   = tow - transit_time
+            # Use the observation's own native timestamp (BDT for BeiDou,
+            # GPS TOW for GPS/Galileo/GLONASS) so the orbit engine gets the
+            # correct time reference for satellite position computation.
+            t_transmit   = obs['obs_tow'] - transit_time
 
             # Satellite clock correction.
             # apply_tgd=False for iono-free: TGD already cancelled by combination.
@@ -481,6 +522,10 @@ class SPSEngine:
                     iono = ionosphere_correction(lat, lon, elev, azim, tow)
                     sat_state.iono_correction = iono
                     pr_corr -= iono
+
+            # Hard CNR floor — exclude satellites too weak to contribute
+            if obs['cnr'] < CNR_MASK_DBH:
+                continue
 
             w = self._observation_weight(sat_state.elevation, obs['cnr'])
 

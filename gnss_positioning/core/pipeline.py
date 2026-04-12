@@ -101,8 +101,6 @@ class GNSSPipeline:
         # (MSM messages for different constellations arrive separately
         #  but belong to the same epoch)
         self._pending_obs: Dict[float, EpochObservations] = {}
-        self._last_process_time = 0.0
-        self._epoch_timeout = 0.5  # seconds to wait for all constellations
 
         # Processing lock
         self._process_lock = threading.Lock()
@@ -203,8 +201,9 @@ class GNSSPipeline:
             {"source": source, "msg_type": msg_type, "length": len(data)},
         )
 
-        # MSM4 observation messages
-        if msg_type in (1074, 1084, 1094, 1124):
+        # MSM4 and MSM7 observation messages
+        # MSM4: 1074/1084/1094/1124  MSM7: 1077/1087/1097/1127
+        if msg_type in (1074, 1077, 1084, 1087, 1094, 1097, 1124, 1127):
             epoch = self._msm_decoder.decode(msg_type, data, self._gps_week)
             if epoch:
                 if is_base:
@@ -252,29 +251,44 @@ class GNSSPipeline:
                 self._session_logger.log_event("base_station_arp", info)
 
     def _handle_rover_observations(self, epoch: EpochObservations):
-        """Accumulate rover observations and trigger processing.
+        """Accumulate rover observations and trigger processing at epoch boundaries.
 
-        MSM messages for different constellations arrive separately
-        but share the same epoch time. We accumulate and process when
-        we either have all expected constellations or timeout.
+        MSM messages for different constellations share the same GPS TOW but
+        arrive as separate RTCM frames within a few milliseconds of each other.
+        Epoch boundary detection: when a strictly newer TOW arrives, the previous
+        TOW's accumulation is complete — process it before starting the new one.
+
+        TOW values are rounded to the nearest millisecond to absorb sub-ms
+        floating-point drift introduced by the GLONASS time-system conversion.
         """
-        tow = epoch.timestamp_gps
+        # Determine the GPS-TOW accumulation key.
+        # BeiDou MSM4 epoch time is in BDT (BeiDou Time = GPS time − 14 s).
+        # Adding 14 s converts BDT to GPS TOW so BeiDou observations land in
+        # the same epoch bucket as GPS/Galileo/GLONASS without affecting the
+        # timestamp stored in each RawObservation (which must stay in BDT for
+        # correct satellite-position computation in the orbit engine).
+        is_beidou = (
+            epoch.observations and
+            epoch.observations[0].constellation == Constellation.BEIDOU
+        )
+        acc_tow = round(epoch.timestamp_gps + (14.0 if is_beidou else 0.0), 3)
 
         with self._process_lock:
-            if tow not in self._pending_obs:
-                self._pending_obs[tow] = EpochObservations(
-                    timestamp_gps=tow,
+            # Any pending epoch with a strictly older GPS TOW is now complete.
+            # Process it so all constellation observations enter WLS together.
+            for old_tow in sorted(self._pending_obs.keys()):
+                if old_tow < acc_tow - 0.001:
+                    self._process_pending_epoch(old_tow)
+
+            # Accumulate observations for the current epoch.
+            # The EpochObservations timestamp is GPS TOW (acc_tow) so the SPS
+            # engine uses a consistent TOW across all constellations.
+            if acc_tow not in self._pending_obs:
+                self._pending_obs[acc_tow] = EpochObservations(
+                    timestamp_gps=acc_tow,
                     week=epoch.week,
                 )
-
-            # Merge observations
-            self._pending_obs[tow].observations.extend(epoch.observations)
-
-            # Check if we should process
-            # Process after a small delay to allow all constellations
-            now = time.time()
-            if now - self._last_process_time > 0.2:
-                self._process_pending_epoch(tow)
+            self._pending_obs[acc_tow].observations.extend(epoch.observations)
 
     def _process_pending_epoch(self, tow: float):
         """Process accumulated observations for an epoch."""
@@ -282,12 +296,6 @@ class GNSSPipeline:
             return
 
         epoch = self._pending_obs.pop(tow)
-        self._last_process_time = time.time()
-
-        # Clean old pending observations
-        old_keys = [k for k in self._pending_obs if abs(k - tow) > 5.0]
-        for k in old_keys:
-            del self._pending_obs[k]
 
         # Notify UI about satellites
         if self.on_satellites:
