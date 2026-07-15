@@ -26,6 +26,7 @@ from ..core.data_types import (
     GPSEphemeris, GalileoEphemeris, GLONASSEphemeris, BeidouEphemeris,
     SatelliteState, Constellation,
 )
+from ..utils.coordinates import pz90_to_wgs84, pz90_to_wgs84_velocity
 
 logger = logging.getLogger(__name__)
 
@@ -272,7 +273,15 @@ def compute_glonass_satellite(eph: GLONASSEphemeris,
             state = state + (h / 6.0) * (k1 + 2*k2 + 2*k3 + k4)
             t_remaining -= h
 
+
         x, y, z, vx, vy, vz = state
+
+        # GLONASS broadcast ephemeris is in PZ-90(.11); the rest of the
+        # engine (WLS, elevation/azimuth, earth rotation correction)
+        # assumes WGS-84. Transform here so downstream code stays frame-
+        # agnostic.
+        x, y, z = pz90_to_wgs84(x, y, z)
+        vx, vy, vz = pz90_to_wgs84_velocity(vx, vy, vz)
 
         # Clock correction
         # GLONASS: tau_n has negative sign convention in ICD
