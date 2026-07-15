@@ -468,8 +468,9 @@ class SPSEngine:
 
             # GLONASS broadcasts in PZ-90 frame; WGS-84 alignment not yet
             # implemented. Skip GLONASS to avoid corrupting the WLS solution.
-            if const == Constellation.GLONASS:
-                continue
+            # [EG-C: these next 2 lines can be deleted after testing]
+            #if const == Constellation.GLONASS:
+            #   continue
 
             eph = self.eph_store.get_ephemeris(const, svn)
             if eph is None:
