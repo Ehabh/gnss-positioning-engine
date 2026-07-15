@@ -7,6 +7,13 @@ All angles in radians internally unless specified otherwise.
 import numpy as np
 from ..core.constants import WGS84_A, WGS84_B, WGS84_E2, WGS84_F
 
+# [EG_C] PZ-90(.11) -> WGS-84 (EPSG:15843, "Coordinate Frame rotation" method)
+# ---------------------------------------------------------------------------
+PZ90_DX = 0.0                                      # [m]
+PZ90_DY = 0.0                                      # [m]
+PZ90_DZ = 1.5                                      # [m]
+PZ90_RZ_ARCSEC = -0.076                            # [arc-seconds]
+PZ90_RZ_RAD = np.radians(PZ90_RZ_ARCSEC / 3600.0)  # [rad]
 
 def ecef_to_lla(x: float, y: float, z: float) -> tuple:
     """Convert ECEF coordinates to geodetic (WGS84).
@@ -162,3 +169,45 @@ def compute_geometric_range(receiver_ecef: np.ndarray,
                              satellite_ecef: np.ndarray) -> float:
     """Geometric range between receiver and satellite [m]."""
     return np.linalg.norm(satellite_ecef - receiver_ecef)
+
+
+# [EG-C]
+def pz90_to_wgs84(x: float, y: float, z: float) -> np.ndarray:
+    """Transform a PZ-90(.11) ECEF position to WGS-84 ECEF.
+
+    Small-angle 7-parameter Helmert, EPSG:1032 "Coordinate Frame
+    rotation" convention (matches EPSG:15843's parameter set). With
+    rX = rY = scale = 0, this reduces to a rotation about Z plus a
+    Z-axis translation:
+
+        x_w = x + rz*y + dx
+        y_w = -rz*x + y + dy
+        z_w = z + dz
+
+    Args:
+        x, y, z: PZ-90(.11) ECEF coordinates [m]
+
+    Returns:
+        np.array([x, y, z]) in WGS-84 ECEF [m]
+    """
+    x_w = x + PZ90_RZ_RAD * y + PZ90_DX
+    y_w = -PZ90_RZ_RAD * x + y + PZ90_DY
+    z_w = z + PZ90_DZ
+    return np.array([x_w, y_w, z_w])
+
+
+def pz90_to_wgs84_velocity(vx: float, vy: float, vz: float) -> np.ndarray:
+    """Rotate a PZ-90(.11) ECEF velocity vector into WGS-84.
+
+    Velocities only need the rotation component of the Helmert
+    transform (translation and scale don't apply to a rate vector).
+
+    Args:
+        vx, vy, vz: PZ-90(.11) ECEF velocity [m/s]
+
+    Returns:
+        np.array([vx, vy, vz]) in WGS-84 ECEF [m/s]
+    """
+    vx_w = vx + PZ90_RZ_RAD * vy
+    vy_w = -PZ90_RZ_RAD * vx + vy
+    return np.array([vx_w, vy_w, vz])
